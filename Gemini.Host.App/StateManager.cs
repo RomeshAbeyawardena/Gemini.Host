@@ -1,18 +1,14 @@
-﻿using System.Collections.Generic;
-using System.IO;
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Gemini.Host.App;
 
 internal class JsonStateManager
 {
     // Changed value to string since URLs are strings, avoiding JsonElement conversion issues
-    private Dictionary<string, string> stateDictionary = [];
+    private Dictionary<string, object> stateDictionary = [];
 
-    public bool TryGetState(string key, out string? value)
+    public bool TryGetState(string key, out object? value)
     {
         return stateDictionary.TryGetValue(key, out value);
     }
@@ -30,7 +26,7 @@ internal class JsonStateManager
     public async Task LoadAsync(string serialisedPayload)
     {
         using MemoryStream memoryStream = new(Encoding.UTF8.GetBytes(serialisedPayload));
-        stateDictionary = await JsonSerializer.DeserializeAsync<Dictionary<string, string>>(memoryStream) ?? [];
+        stateDictionary = await JsonSerializer.DeserializeAsync<Dictionary<string, object>>(memoryStream) ?? [];
     }
 
     public virtual async Task<string> SaveAsync()

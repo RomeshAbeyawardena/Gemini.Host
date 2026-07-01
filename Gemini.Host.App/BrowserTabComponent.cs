@@ -1,106 +1,130 @@
-﻿using Microsoft.Web.WebView2.Core;
+﻿using Gemini.Host.App.Models;
+using Microsoft.Web.WebView2.Core;
+using System;
+using System.Drawing;
 using System.Runtime.InteropServices;
+using System.Windows.Forms;
 
 namespace Gemini.Host.App;
 
 internal partial class BrowserTabComponent : UserControl
 {
-
-    private FileJsonStateManager _stateManager;
+    private readonly TabState _tabState;
     private IntPtr? hIcon;
     private const string StartUrl = "https://gemini.google.com";
-    private const string LastVisitedUrlStateKey = "lastVisitedUrl";
 
-    // Add this P/Invoke import at the top of your class
     [LibraryImport("user32.dll", EntryPoint = "DestroyIcon")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool DestroyIcon(IntPtr handle);
+
     public event EventHandler<string>? TitleChanged;
+    public event EventHandler<TabState>? TabStateUpdated;
     public event EventHandler<Icon>? IconChanged;
 
-    public BrowserTabComponent(FileJsonStateManager stateManager)
+    public BrowserTabComponent(TabState tabState)
     {
-        _stateManager = stateManager;
+        InitializeComponent();
+        _tabState = tabState;
 
         browser = new()
         {
-            Source = new Uri(GetStoredOrDefaultUrl),
             Dock = DockStyle.Fill
         };
 
-        browser.NavigationCompleted += Browser_NavigationCompleted;
         Controls.Add(browser);
+
+        // Safely kick off asynchronous engine spin-up
+        InitializeWebViewAsync();
     }
 
-    private string GetStoredOrDefaultUrl
+    private async void InitializeWebViewAsync()
     {
-        get
+        // 1. Await engine initialization to guarantee CoreWebView2 is NOT null
+        await browser.EnsureCoreWebView2Async();
+
+        // 2. Safely bind events exactly ONCE right here
+        browser.CoreWebView2.SourceChanged += Source_Changed;
+        browser.NavigationCompleted += Browser_NavigationCompleted;
+
+        // 3. Initiate the initial route navigation safely
+        browser.Source = new Uri(_tabState.LastVisitedUrl ?? StartUrl);
+    }
+
+    private void NotifyStateUpdated(string currentUrl, string documentTitle)
+    {
+        _tabState.LastVisitedUrl = currentUrl;
+        _tabState.Title = documentTitle;
+
+        // Safely marshal the state event update back onto the main UI thread 
+        // to prevent cross-thread WinForms invalidation crashes
+        if (InvokeRequired)
         {
-            var url = StartUrl;
-
-            if (_stateManager.TryGetState(LastVisitedUrlStateKey, out var _url))
-            {
-                url = _url?.ToString() ?? StartUrl;
-            }
-
-            return url;
+            BeginInvoke(() => TabStateUpdated?.Invoke(this, _tabState));
+        }
+        else
+        {
+            TabStateUpdated?.Invoke(this, _tabState);
         }
     }
 
     private async void Browser_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
-        var core = browser.CoreWebView2;
-        browser.CoreWebView2.SourceChanged += Source_Changed;
-        TitleChanged?.Invoke(this, core.DocumentTitle);
-        using var iconStream = await core.GetFaviconAsync(CoreWebView2FaviconImageFormat.Png);
-
-        if (iconStream != null && iconStream.Length > 0)
+        if (browser.CoreWebView2 == null)
         {
-            // 1. Load the PNG stream into a standard Bitmap
-            using var bitmap = new Bitmap(iconStream);
+            return;
+        }
 
-            if (hIcon.HasValue)
+        var core = browser.CoreWebView2;
+        TitleChanged?.Invoke(this, core.DocumentTitle);
+
+        try
+        {
+            using var iconStream = await core.GetFaviconAsync(CoreWebView2FaviconImageFormat.Png);
+            if (iconStream != null && iconStream.Length > 0)
             {
-                DestroyIcon(hIcon.Value);
+                using var bitmap = new Bitmap(iconStream);
+
+                if (hIcon.HasValue)
+                {
+                    DestroyIcon(hIcon.Value);
+                }
+
+                hIcon = bitmap.GetHicon();
+                IconChanged?.Invoke(this, Icon.FromHandle(hIcon.Value));
             }
-
-            // 2. Get the native Windows handle for the icon
-            hIcon = bitmap.GetHicon();
-
-            // 3. Create the Icon object from the handle
-            IconChanged?.Invoke(this, Icon.FromHandle(hIcon.Value));
         }
-
-        var currentUrl = browser.Source.OriginalString;
-        if (currentUrl != GetStoredOrDefaultUrl)
+        catch (Exception)
         {
-            _stateManager.SetState(LastVisitedUrlStateKey, currentUrl);
-            await _stateManager.SaveAsync();
+            // Fail silently if favicon streaming drops due to a network glitch
         }
+
+        NotifyStateUpdated(browser.Source.OriginalString, core.DocumentTitle);
     }
-    private async void Source_Changed(object? sender, CoreWebView2SourceChangedEventArgs e)
+
+    private void Source_Changed(object? sender, CoreWebView2SourceChangedEventArgs e)
     {
+        if (browser.CoreWebView2 == null) return;
+
         var core = browser.CoreWebView2;
         TitleChanged?.Invoke(this, core.DocumentTitle);
 
-        var currentUrl = browser.Source.OriginalString;
-        if (currentUrl != StartUrl)
-        {
-            _stateManager.SetState(LastVisitedUrlStateKey, currentUrl);
-            await _stateManager.SaveAsync();
-        }
+        NotifyStateUpdated(browser.Source.OriginalString, core.DocumentTitle);
     }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
             browser.NavigationCompleted -= Browser_NavigationCompleted;
-            browser.CoreWebView2.SourceChanged -= Source_Changed;
+
+            browser.CoreWebView2?.SourceChanged -= Source_Changed;
 
             if (hIcon.HasValue)
             {
                 DestroyIcon(hIcon.Value);
             }
+
+            browser.Dispose();
         }
         base.Dispose(disposing);
     }

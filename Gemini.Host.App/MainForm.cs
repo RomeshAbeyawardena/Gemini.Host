@@ -1,4 +1,5 @@
-﻿using Microsoft.Web.WebView2.Core;
+﻿using Gemini.Host.App.Models;
+using Microsoft.Web.WebView2.Core;
 using System;
 using System.Drawing;
 using System.IO;
@@ -11,7 +12,7 @@ internal partial class MainForm : Form
 {
     private const string SubFolder = "gemini.host";
     private const string Filename = "gemini.host.settings.json";
-
+    private const string ApplicationSettingState = "applicationState";
     private readonly FileJsonStateManager stateManager = new(
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         SubFolder,
@@ -21,23 +22,33 @@ internal partial class MainForm : Form
 
     public MainForm()
     {
+        Task.Run(SetupApplicationData)
+            .ConfigureAwait(true).GetAwaiter().GetResult();
+
+        ApplicationSettings settings = new();
+
+        if (stateManager.TryGetState(ApplicationSettingState, out var state)
+            && state is ApplicationSettings applicationSettings)
+
         InitializeComponent();
 
-        InitialiseControls();
+        InitialiseControls(settings);
 
+        this.Text = Title;
+    }
+
+    private async void SetupApplicationData()
+    {
         var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), SubFolder);
         if (!Directory.Exists(path))
         {
             Directory.CreateDirectory(path);
         }
 
-        Task.Run(async () => await stateManager.LoadAsync())
-            .ConfigureAwait(true).GetAwaiter().GetResult();
-
-        this.Text = Title;
+        await stateManager.LoadAsync();
     }
 
-    private void InitialiseControls()
+    private void InitialiseControls(ApplicationSettings settings)
     {
         tableLayoutPanel = new()
         {
