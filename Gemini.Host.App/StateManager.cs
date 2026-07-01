@@ -1,20 +1,23 @@
-﻿using System.Text;
+﻿using System.Collections.Generic;
+using System.IO;
+using System.Text;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Gemini.Host.App;
 
 internal class JsonStateManager
 {
-    private Dictionary<string, object> stateDictionary = [];
+    // Changed value to string since URLs are strings, avoiding JsonElement conversion issues
+    private Dictionary<string, string> stateDictionary = [];
 
-    public bool TryGetState(string key, out object? value)
+    public bool TryGetState(string key, out string? value)
     {
-        value = null;
-
         return stateDictionary.TryGetValue(key, out value);
     }
 
-    public void SetState(string key, object value)
+    public void SetState(string key, string value)
     {
         if (value is null)
         {
@@ -27,16 +30,13 @@ internal class JsonStateManager
     public async Task LoadAsync(string serialisedPayload)
     {
         using MemoryStream memoryStream = new(Encoding.UTF8.GetBytes(serialisedPayload));
-
-        stateDictionary = await JsonSerializer.DeserializeAsync<Dictionary<string, object>>(memoryStream) ?? [];
+        stateDictionary = await JsonSerializer.DeserializeAsync<Dictionary<string, string>>(memoryStream) ?? [];
     }
 
-    public async virtual Task<string> SaveAsync()
+    public virtual async Task<string> SaveAsync()
     {
         using MemoryStream memoryStream = new();
-
         await JsonSerializer.SerializeAsync(memoryStream, stateDictionary);
-
         return Encoding.UTF8.GetString(memoryStream.ToArray());
     }
 }
@@ -45,6 +45,10 @@ internal class FileJsonStateManager(string fileName) : JsonStateManager
 {
     public string StoreFileName { get; } = fileName;
 
+    // A semaphore ensures that if two tabs finish navigating at the exact same millisecond,
+    // they line up nicely instead of throwing a file-in-use exception.
+    private readonly SemaphoreSlim _fileLock = new(1, 1);
+
     public async Task LoadAsync()
     {
         if (!File.Exists(StoreFileName))
@@ -52,16 +56,31 @@ internal class FileJsonStateManager(string fileName) : JsonStateManager
             return;
         }
 
-        var serialisedPayload = File.ReadAllText(StoreFileName);
-
-        await LoadAsync(serialisedPayload);
+        await _fileLock.WaitAsync();
+        try
+        {
+            var serialisedPayload = await File.ReadAllTextAsync(StoreFileName, Encoding.UTF8);
+            await LoadAsync(serialisedPayload);
+        }
+        finally
+        {
+            _fileLock.Release();
+        }
     }
 
-    public async override Task<string> SaveAsync()
+    public override async Task<string> SaveAsync()
     {
         var serialisedPayload = await base.SaveAsync();
-        
-        File.WriteAllText(StoreFileName, serialisedPayload, Encoding.UTF8);
+
+        await _fileLock.WaitAsync();
+        try
+        {
+            await File.WriteAllTextAsync(StoreFileName, serialisedPayload, Encoding.UTF8);
+        }
+        finally
+        {
+            _fileLock.Release();
+        }
 
         return serialisedPayload;
     }

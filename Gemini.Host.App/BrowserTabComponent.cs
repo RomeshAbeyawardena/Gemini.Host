@@ -80,6 +80,9 @@ internal partial class BrowserTabComponent : UserControl
     }
     private async void Source_Changed(object? sender, CoreWebView2SourceChangedEventArgs e)
     {
+        var core = browser.CoreWebView2;
+        TitleChanged?.Invoke(this, core.DocumentTitle);
+
         var currentUrl = browser.Source.OriginalString;
         if (currentUrl != StartUrl)
         {
