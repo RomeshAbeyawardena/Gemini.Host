@@ -1,14 +1,13 @@
 ﻿using Microsoft.Web.WebView2.WinForms;
+using System;
+using System.Collections.Generic;
+using System.Text;
 
 namespace Gemini.Host.App;
 
-internal partial class MainForm
+internal partial class BrowserTabComponent
 {
-    private System.ComponentModel.Container components;
-    private TabControl browserTabControl;
-    private TabPage defaultTabPage;
-    private TableLayoutPanel tableLayoutPanel;
-    private Panel browserPanel;
+    private WebView2 browser;
 
     private void InitializeComponent()
     {
@@ -19,9 +18,6 @@ internal partial class MainForm
         AutoScaleDimensions = new SizeF(10F, 25F);
         AutoScaleMode = AutoScaleMode.Font;
         BackColor = Color.FromArgb(64, 64, 64);
-        ClientSize = new Size(1216, 722);
-        Name = "MainForm";
         ResumeLayout(false);
     }
-
 }

@@ -5,40 +5,76 @@ namespace Gemini.Host.App;
 
 internal partial class MainForm : Form
 {
-    // Add this P/Invoke import at the top of your class
-    [LibraryImport("user32.dll", EntryPoint = "DestroyIcon")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static partial bool DestroyIcon(IntPtr handle);
+    
     private const string SubFolder = "gemini.host";
     private const string Filename = "gemini.host.settings.json";
-    private const string StartUrl = "https://gemini.google.com";
-    private const string LastVisitedUrlStateKey = "lastVisitedUrl";
+    private List<Control> browserTabControls;
     private readonly FileJsonStateManager stateManager = new(
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         SubFolder,
         Filename));
 
-    private IntPtr? hIcon;
     private const string Title = "Gemini App";
 
-    private string GetStoredOrDefaultUrl
+    private void InitialiseControls()
     {
-        get
+        tableLayoutPanel = new()
         {
-            var url = StartUrl;
+            ColumnCount = 1,
+            RowCount = 2,
+            BackColor = Color.FromArgb(64, 64, 64),
+            Dock = DockStyle.Fill
+        };
 
-            if (stateManager.TryGetState(LastVisitedUrlStateKey, out var _url))
-            {
-                url = _url?.ToString() ?? StartUrl;
-            }
+        tableLayoutPanel.ColumnStyles.Clear();
+        tableLayoutPanel.RowStyles.Clear();
 
-            return url;
-        }
+        // 3. Make the column stretch to fill the width
+        tableLayoutPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+
+        // 4. Configure the rows: Fixed height first, remainder second
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 50F)); // e.g., 50 pixels high
+        tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));  // Take
+
+        browserTabControl = new()
+        {
+            BackColor = Color.FromArgb(64, 64, 64),
+            Dock = DockStyle.Fill
+        };
+
+        browserTabControl.SelectedIndexChanged += BrowserTabControl_TabIndexChanged;
+        browserTabControl.ControlAdded += BrowserTabControl_ControlAdded;
+
+        defaultTabPage = new("Add new tab")
+        {
+            Name = "add_new_tab"
+        };
+
+        browserTabControl.TabPages.Add("Current tab");
+
+        SpawnNewTab();
+
+        browserTabControl.TabPages.Add(defaultTabPage);
+        tableLayoutPanel.Controls.Add(browserTabControl, 0, 0);
+
+        browserPanel = new()
+        {
+            BackColor = Color.FromArgb(64, 64, 64),
+            Dock = DockStyle.Fill
+        };
+
+        tableLayoutPanel.Controls.Add(browserPanel, 0, 1);
+        Controls.Add(tableLayoutPanel);
     }
 
     public MainForm()
     {
         InitializeComponent();
+        
+        browserTabControls = [];
+
+        InitialiseControls();
+        
         var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             SubFolder);
 
@@ -51,57 +87,44 @@ internal partial class MainForm : Form
             .ConfigureAwait(true).GetAwaiter().GetResult();
 
         this.Text = Title;
+    }
 
-        browser = new()
+    private void SpawnNewTab()
+    {
+        BrowserTabComponent browserTabComponent = new(stateManager)
         {
-            Source = new Uri(GetStoredOrDefaultUrl),
             Dock = DockStyle.Fill
         };
 
-        browser.NavigationCompleted += Browser_NavigationCompleted;
-        Controls.Add(browser);
+        browserTabControls.Add(browserTabComponent);
     }
 
-    
-    private async void Browser_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    private void BrowserTabControl_TabIndexChanged(object? sender, EventArgs e)
     {
-        var core = browser.CoreWebView2;
-        browser.CoreWebView2.SourceChanged += Source_Changed;
-        this.Text = $"{Title} - {core.DocumentTitle}";
-        using var iconStream = await core.GetFaviconAsync(CoreWebView2FaviconImageFormat.Png);
-
-        if (iconStream != null && iconStream.Length > 0)
+        var currentIndex = browserTabControl.SelectedIndex;
+        if (currentIndex == browserTabControl.TabPages.Count - 1)
         {
-            // 1. Load the PNG stream into a standard Bitmap
-            using var bitmap = new Bitmap(iconStream);
+            var tabPage = new TabPage("Newly spawned tab");
 
-            if (hIcon.HasValue)
-            {
-                DestroyIcon(hIcon.Value);
-            }
+            SpawnNewTab();
+            browserTabControl.TabPages.Add(tabPage);
 
-            // 2. Get the native Windows handle for the icon
-            hIcon = bitmap.GetHicon();
-
-            // 3. Create the Icon object from the handle
-            this.Icon = Icon.FromHandle(hIcon.Value);
+            return;
         }
 
-        var currentUrl = browser.Source.OriginalString;
-        if (currentUrl != GetStoredOrDefaultUrl)
-        {
-            stateManager.SetState(LastVisitedUrlStateKey, currentUrl);
-            await stateManager.SaveAsync();
-        }
+        browserPanel.Controls.Clear();
+        browserPanel.Controls.Add(browserTabControls[currentIndex]);
     }
 
-    private async void Source_Changed(object? sender, CoreWebView2SourceChangedEventArgs e)
+    private bool bypass = false;
+    private void BrowserTabControl_ControlAdded(object? sender, ControlEventArgs e)
     {
-        var currentUrl = browser.Source.OriginalString;
-        if (currentUrl != StartUrl)
+        if (!bypass && browserTabControl.TabPages.Count > 2)
         {
-            stateManager.SetState(LastVisitedUrlStateKey, currentUrl);
-            await stateManager.SaveAsync();
+            bypass = true;
+            browserTabControl.TabPages.Remove(defaultTabPage);
+            browserTabControl.TabPages.Add(defaultTabPage);
+            bypass = false;
         }
     }
 
@@ -109,14 +132,15 @@ internal partial class MainForm : Form
     {
         if (disposing)
         {
-            browser.NavigationCompleted -= Browser_NavigationCompleted;
-            browser.CoreWebView2.SourceChanged -= Source_Changed;
-
-            if (hIcon.HasValue)
-            {
-                DestroyIcon(hIcon.Value);
-            }
+            browserTabControl.ControlAdded -= BrowserTabControl_ControlAdded;
+            browserTabControl.TabIndexChanged -= BrowserTabControl_TabIndexChanged;
         }
+
+        foreach(var control in browserTabControls)
+        {
+            control?.Dispose();
+        }
+
         base.Dispose(disposing);
     }
 }
