@@ -13,7 +13,7 @@ internal class JsonStateManager
         return stateDictionary.TryGetValue(key, out value);
     }
 
-    public void SetState(string key, string value)
+    public void SetState(string key, object value)
     {
         if (value is null)
         {

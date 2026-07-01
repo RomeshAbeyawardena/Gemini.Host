@@ -11,7 +11,10 @@ public class TabCollection : IReadOnlyDictionary<string, TabState>
 
     public void Set(string key, TabState state)
     {
-        tabs.AddOrUpdate(key, state, (existingKey, oldState) => state);
+        if (!tabs.TryAdd(key, state))
+        {
+            tabs[key] = state;
+        }
     }
 
     public IEnumerable<string> Keys => tabs.Keys;

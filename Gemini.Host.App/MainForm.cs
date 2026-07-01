@@ -1,6 +1,7 @@
 ﻿using Gemini.Host.App.Models;
 using Microsoft.Web.WebView2.Core;
 using System;
+using System.ComponentModel;
 using System.Drawing;
 using System.IO;
 using System.Threading.Tasks;
@@ -12,43 +13,57 @@ internal partial class MainForm : Form
 {
     private const string SubFolder = "gemini.host";
     private const string Filename = "gemini.host.settings.json";
-    private const string ApplicationSettingState = "applicationState";
-    private readonly FileJsonStateManager stateManager = new(
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        SubFolder,
-        Filename));
+
+    private readonly FileJsonStateManager stateManager;
+    private ApplicationSettings settings = new();
 
     private const string Title = "Gemini App";
 
     public MainForm()
     {
-        Task.Run(SetupApplicationData)
-            .ConfigureAwait(true).GetAwaiter().GetResult();
-
-        ApplicationSettings settings = new();
-
-        if (stateManager.TryGetState(ApplicationSettingState, out var state)
-            && state is ApplicationSettings applicationSettings)
-
         InitializeComponent();
 
-        InitialiseControls(settings);
+        // 1. Establish file paths safely
+        string appDataPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), SubFolder);
+        if (!Directory.Exists(appDataPath))
+        {
+            Directory.CreateDirectory(appDataPath);
+        }
+
+        string fullSettingsPath = Path.Combine(appDataPath, Filename);
+        stateManager = new FileJsonStateManager(fullSettingsPath);
+
+        // 2. Perform UI thread safe synchronous initialization load block
+        LoadApplicationSettingsSynchronously();
+
+        // 3. Build UI layouts
+        InitialiseControls();
 
         this.Text = Title;
     }
 
-    private async void SetupApplicationData()
+    private void LoadApplicationSettingsSynchronously()
     {
-        var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), SubFolder);
-        if (!Directory.Exists(path))
+        try
         {
-            Directory.CreateDirectory(path);
-        }
+            // Block cleanly on task thread using modern pattern without deadlocking UI hooks
+            var loadTask = Task.Run(async () => await stateManager.LoadAsync());
+            loadTask.Wait();
 
-        await stateManager.LoadAsync();
+            // Bind parsed states directly or default to a pristine application state context
+            if (stateManager.Settings is ApplicationSettings savedSettings)
+            {
+                settings = savedSettings;
+            }
+        }
+        catch (Exception)
+        {
+            // Fail safely to blank instantiation if settings payload file is corrupted
+            settings = new ApplicationSettings();
+        }
     }
 
-    private void InitialiseControls(ApplicationSettings settings)
+    private void InitialiseControls()
     {
         tableLayoutPanel = new()
         {
@@ -61,10 +76,7 @@ internal partial class MainForm : Form
         tableLayoutPanel.ColumnStyles.Clear();
         tableLayoutPanel.RowStyles.Clear();
 
-        // Make the column stretch to fill the width
         tableLayoutPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-
-        // Configure the rows: Fixed height first, remainder second
         tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 50F));
         tableLayoutPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
@@ -74,7 +86,6 @@ internal partial class MainForm : Form
             Dock = DockStyle.Fill
         };
 
-        // Wire up the index change event
         browserTabControl.SelectedIndexChanged += BrowserTabControl_SelectedIndexChanged;
 
         defaultTabPage = new("Add new tab")
@@ -82,7 +93,6 @@ internal partial class MainForm : Form
             Name = "add_new_tab"
         };
 
-        // Set up the structural layout hierarchy
         tableLayoutPanel.Controls.Add(browserTabControl, 0, 0);
 
         browserPanel = new()
@@ -94,34 +104,92 @@ internal partial class MainForm : Form
         tableLayoutPanel.Controls.Add(browserPanel, 0, 1);
         Controls.Add(tableLayoutPanel);
 
-        // Spawn your initial default tab, then attach the helper "plus" tab right after it
-        SpawnNewTab("Current tab");
+        // Load pre-existing historical views or spawn a clean homepage session
+        LoadOrCreateTabs();
+    }
+
+    private void LoadOrCreateTabs()
+    {
+        if (settings.Tabs != null && settings.Tabs.Count > 0)
+        {
+            foreach (var kvp in settings.Tabs)
+            {
+                RestoreTabFromState(kvp.Value);
+            }
+        }
+        else
+        {
+            SpawnNewTab("Current tab");
+        }
+
+        // Always push placeholder row tab layout button down to final index location
         browserTabControl.TabPages.Add(defaultTabPage);
     }
 
-    private void SpawnNewTab(string title)
+    private void RestoreTabFromState(TabState tabState)
     {
-        TabPage tabPage = new(title);
+        // Rebuild active visual tabs out of your saved domain models
+        TabPage tabPage = new(tabState.Title ?? tabState.Name ?? "Gemini Chat");
 
-        // Create the individual tab components dynamically
-        BrowserTabComponent browserTabComponent = new(stateManager)
+        BrowserTabComponent browserTabComponent = new(tabState)
         {
             Dock = DockStyle.Fill
         };
 
         browserTabComponent.TitleChanged += BrowserTabComponent_TitleChanged;
+        browserTabComponent.TabStateUpdated += BrowserTabComponent_TabStateUpdated;
 
-        // Store the component reference straight into the TabPage's metadata
+        tabPage.Tag = browserTabComponent;
+        browserTabControl.TabPages.Add(tabPage);
+    }
+
+    private void SpawnNewTab(string title)
+    {
+        TabState tabState = new()
+        {
+            Key = Guid.NewGuid().ToString("N"),
+            Name = title,
+            Title = title
+        };
+
+        settings.Tabs.Set(tabState.Key, tabState);
+
+        TabPage tabPage = new(title);
+        BrowserTabComponent browserTabComponent = new(tabState)
+        {
+            Dock = DockStyle.Fill
+        };
+
+        browserTabComponent.TitleChanged += BrowserTabComponent_TitleChanged;
+        browserTabComponent.TabStateUpdated += BrowserTabComponent_TabStateUpdated;
+
         tabPage.Tag = browserTabComponent;
 
-        // Safely wedge the new tab directly before our "Add new tab" target row
         int insertIndex = Math.Max(0, browserTabControl.TabPages.Count - 1);
         browserTabControl.TabPages.Insert(insertIndex, tabPage);
     }
 
     private void BrowserTabComponent_TitleChanged(object? sender, string e)
     {
-        browserTabControl.TabPages[browserTabControl.SelectedIndex].Text = e;
+        if (sender is BrowserTabComponent component)
+        {
+            // Trace back across pages structurally to match the precise sender reference
+            foreach (TabPage page in browserTabControl.TabPages)
+            {
+                if (page.Tag == component)
+                {
+                    page.Text = e;
+                    break;
+                }
+            }
+        }
+    }
+
+    private async void BrowserTabComponent_TabStateUpdated(object? sender, TabState e)
+    {
+        // Commit changes automatically whenever a component alerts us its URL/Title altered
+        settings.Tabs.Set(e.Key, e);
+        await stateManager.SaveAsync();
     }
 
     private void BrowserTabControl_SelectedIndexChanged(object? sender, EventArgs e)
@@ -129,17 +197,13 @@ internal partial class MainForm : Form
         var currentIndex = browserTabControl.SelectedIndex;
         if (currentIndex == -1) return;
 
-        // Check if the user selected the placeholder row button
         if (browserTabControl.TabPages[currentIndex] == defaultTabPage)
         {
             SpawnNewTab("Newly spawned tab");
-
-            // Instantly transition the active view focus onto the freshly created tab
             browserTabControl.SelectedIndex = browserTabControl.TabPages.Count - 2;
             return;
         }
 
-        // Clean out the active view container and mount the active tab content
         browserPanel.Controls.Clear();
         if (browserTabControl.TabPages[currentIndex].Tag is BrowserTabComponent component)
         {
@@ -147,21 +211,27 @@ internal partial class MainForm : Form
         }
     }
 
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        var loadTask = Task.Run(async () => await stateManager.SaveAsync());
+        loadTask.Wait();
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
-            // Unsubscribe using the identical event signature to prevent memory leaks
             if (browserTabControl != null)
             {
                 browserTabControl.SelectedIndexChanged -= BrowserTabControl_SelectedIndexChanged;
 
-                // Deep-clean your underlying controls directly via their lifecycle owners
                 foreach (TabPage page in browserTabControl.TabPages)
                 {
-                    if (page.Tag is IDisposable disposableComponent)
+                    if (page.Tag is BrowserTabComponent component)
                     {
-                        disposableComponent.Dispose();
+                        component.TitleChanged -= BrowserTabComponent_TitleChanged;
+                        component.TabStateUpdated -= BrowserTabComponent_TabStateUpdated;
+                        component.Dispose();
                     }
                 }
             }
