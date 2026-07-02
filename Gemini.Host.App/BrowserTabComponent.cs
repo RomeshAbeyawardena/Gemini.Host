@@ -9,7 +9,7 @@ internal partial class BrowserTabComponent : UserControl
     private readonly TabState _tabState;
     private IntPtr? hIcon;
     private const string StartUrl = "https://gemini.google.com";
-
+    private bool IsReloaded = false;
     [LibraryImport("user32.dll", EntryPoint = "DestroyIcon")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool DestroyIcon(IntPtr handle);
@@ -101,6 +101,12 @@ internal partial class BrowserTabComponent : UserControl
         TitleChanged?.Invoke(this, core.DocumentTitle);
 
         NotifyStateUpdated(browser.Source.OriginalString, core.DocumentTitle);
+
+        if (!IsReloaded)
+        {
+            browser.Source = new Uri(_tabState.LastVisitedUrl ?? StartUrl);
+            IsReloaded = true;
+        }
     }
 
     private async void Source_Changed(object? sender, CoreWebView2SourceChangedEventArgs e)
