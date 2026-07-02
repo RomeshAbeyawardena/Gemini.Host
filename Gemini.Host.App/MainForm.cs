@@ -15,7 +15,6 @@ internal partial class MainForm : Form
     private const string Filename = "gemini.host.settings.json";
 
     private readonly FileJsonStateManager stateManager;
-    private ApplicationSettings settings = new();
 
     private const string Title = "Gemini App";
 
@@ -49,17 +48,10 @@ internal partial class MainForm : Form
             // Block cleanly on task thread using modern pattern without deadlocking UI hooks
             var loadTask = Task.Run(async () => await stateManager.LoadAsync());
             loadTask.Wait();
-
-            // Bind parsed states directly or default to a pristine application state context
-            if (stateManager.Settings is ApplicationSettings savedSettings)
-            {
-                settings = savedSettings;
-            }
         }
         catch (Exception)
         {
             // Fail safely to blank instantiation if settings payload file is corrupted
-            settings = new ApplicationSettings();
         }
     }
 
@@ -110,9 +102,9 @@ internal partial class MainForm : Form
 
     private void LoadOrCreateTabs()
     {
-        if (settings.Tabs != null && settings.Tabs.Count > 0)
+        if (stateManager.Settings.Tabs != null && stateManager.Settings.Tabs.Count > 0)
         {
-            foreach (var kvp in settings.Tabs)
+            foreach (var kvp in stateManager.Settings.Tabs)
             {
                 RestoreTabFromState(kvp.Value);
             }
@@ -120,6 +112,7 @@ internal partial class MainForm : Form
         else
         {
             SpawnNewTab("Current tab");
+            LoadTab(0);
         }
 
         // Always push placeholder row tab layout button down to final index location
@@ -152,7 +145,7 @@ internal partial class MainForm : Form
             Title = title
         };
 
-        settings.Tabs.Set(tabState.Key, tabState);
+        stateManager.Settings.Tabs.Set(tabState.Key, tabState);
 
         TabPage tabPage = new(title);
         BrowserTabComponent browserTabComponent = new(tabState)
@@ -188,14 +181,26 @@ internal partial class MainForm : Form
     private async void BrowserTabComponent_TabStateUpdated(object? sender, TabState e)
     {
         // Commit changes automatically whenever a component alerts us its URL/Title altered
-        settings.Tabs.Set(e.Key, e);
-        await stateManager.SaveAsync();
+        stateManager.Settings.Tabs.Set(e.Key, e);
+    }
+
+    private void LoadTab(int? currentIndex = null)
+    {
+        browserPanel.Controls.Clear();
+        currentIndex ??= browserTabControl.SelectedIndex;
+        if (browserTabControl.TabPages[currentIndex.Value].Tag is BrowserTabComponent component)
+        {
+            browserPanel.Controls.Add(component);
+        }
     }
 
     private void BrowserTabControl_SelectedIndexChanged(object? sender, EventArgs e)
     {
         var currentIndex = browserTabControl.SelectedIndex;
-        if (currentIndex == -1) return;
+        if (currentIndex == -1) 
+        { 
+            return; 
+        }
 
         if (browserTabControl.TabPages[currentIndex] == defaultTabPage)
         {
@@ -204,14 +209,10 @@ internal partial class MainForm : Form
             return;
         }
 
-        browserPanel.Controls.Clear();
-        if (browserTabControl.TabPages[currentIndex].Tag is BrowserTabComponent component)
-        {
-            browserPanel.Controls.Add(component);
-        }
+        LoadTab(currentIndex);
     }
 
-    protected override void OnClosing(CancelEventArgs e)
+    protected override void OnFormClosing(FormClosingEventArgs e)
     {
         var loadTask = Task.Run(async () => await stateManager.SaveAsync());
         loadTask.Wait();
