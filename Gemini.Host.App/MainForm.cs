@@ -199,6 +199,7 @@ internal partial class MainForm : Form
         if (browserTabControl.TabPages[currentIndex.Value].Tag is BrowserTabComponent component)
         {
             browserPanel.Controls.Add(component);
+            component.LoadPage();
         }
     }
 

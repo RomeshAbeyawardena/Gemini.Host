@@ -34,6 +34,11 @@ internal partial class BrowserTabComponent : UserControl
         InitializeWebViewAsync();
     }
 
+    public void LoadPage()
+    {
+        browser.Source = new Uri(_tabState.LastVisitedUrl ?? StartUrl);
+    }
+
     private async void InitializeWebViewAsync()
     {
         // 1. Await engine initialization to guarantee CoreWebView2 is NOT null
@@ -43,9 +48,6 @@ internal partial class BrowserTabComponent : UserControl
         browser.CoreWebView2.SourceChanged += Source_Changed;
         browser.CoreWebView2.NavigationCompleted += Browser_NavigationCompleted;
         browser.NavigationCompleted += Browser_NavigationCompleted;
-
-        // 3. Initiate the initial route navigation safely
-        browser.Source = new Uri(_tabState.LastVisitedUrl ?? StartUrl);
     }
 
     private void NotifyStateUpdated(string currentUrl, string documentTitle)
