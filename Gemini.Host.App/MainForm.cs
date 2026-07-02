@@ -112,8 +112,10 @@ internal partial class MainForm : Form
         else
         {
             SpawnNewTab("Current tab");
-            LoadTab(0);
+            
         }
+
+        LoadTab(0);
 
         // Always push placeholder row tab layout button down to final index location
         browserTabControl.TabPages.Add(defaultTabPage);
@@ -131,6 +133,7 @@ internal partial class MainForm : Form
 
         browserTabComponent.TitleChanged += BrowserTabComponent_TitleChanged;
         browserTabComponent.TabStateUpdated += BrowserTabComponent_TabStateUpdated;
+        browserTabComponent.IconChanged += BrowserTabComponent_IconChanged;
 
         tabPage.Tag = browserTabComponent;
         browserTabControl.TabPages.Add(tabPage);
@@ -155,11 +158,16 @@ internal partial class MainForm : Form
 
         browserTabComponent.TitleChanged += BrowserTabComponent_TitleChanged;
         browserTabComponent.TabStateUpdated += BrowserTabComponent_TabStateUpdated;
-
+        browserTabComponent.IconChanged += BrowserTabComponent_IconChanged;
         tabPage.Tag = browserTabComponent;
 
         int insertIndex = Math.Max(0, browserTabControl.TabPages.Count - 1);
         browserTabControl.TabPages.Insert(insertIndex, tabPage);
+    }
+
+    private void BrowserTabComponent_IconChanged(object? sender, Icon e)
+    {
+        Icon = e;
     }
 
     private void BrowserTabComponent_TitleChanged(object? sender, string e)
@@ -232,6 +240,7 @@ internal partial class MainForm : Form
                     {
                         component.TitleChanged -= BrowserTabComponent_TitleChanged;
                         component.TabStateUpdated -= BrowserTabComponent_TabStateUpdated;
+                        component.IconChanged -= BrowserTabComponent_IconChanged;
                         component.Dispose();
                     }
                 }

@@ -41,6 +41,7 @@ internal partial class BrowserTabComponent : UserControl
 
         // 2. Safely bind events exactly ONCE right here
         browser.CoreWebView2.SourceChanged += Source_Changed;
+        browser.CoreWebView2.NavigationCompleted += Browser_NavigationCompleted;
         browser.NavigationCompleted += Browser_NavigationCompleted;
 
         // 3. Initiate the initial route navigation safely
@@ -64,16 +65,8 @@ internal partial class BrowserTabComponent : UserControl
         }
     }
 
-    private async void Browser_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    private async Task GetIcon(CoreWebView2 core)
     {
-        if (browser.CoreWebView2 == null)
-        {
-            return;
-        }
-
-        var core = browser.CoreWebView2;
-        TitleChanged?.Invoke(this, core.DocumentTitle);
-
         try
         {
             using var iconStream = await core.GetFaviconAsync(CoreWebView2FaviconImageFormat.Png);
@@ -94,17 +87,29 @@ internal partial class BrowserTabComponent : UserControl
         {
             // Fail silently if favicon streaming drops due to a network glitch
         }
+    }
+
+    private async void Browser_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        if (browser.CoreWebView2 == null)
+        {
+            return;
+        }
+
+        var core = browser.CoreWebView2;
+        await GetIcon(core);
+        TitleChanged?.Invoke(this, core.DocumentTitle);
 
         NotifyStateUpdated(browser.Source.OriginalString, core.DocumentTitle);
     }
 
-    private void Source_Changed(object? sender, CoreWebView2SourceChangedEventArgs e)
+    private async void Source_Changed(object? sender, CoreWebView2SourceChangedEventArgs e)
     {
         if (browser.CoreWebView2 == null) return;
 
         var core = browser.CoreWebView2;
         TitleChanged?.Invoke(this, core.DocumentTitle);
-
+        await GetIcon(core);
         NotifyStateUpdated(browser.Source.OriginalString, core.DocumentTitle);
     }
 
@@ -113,7 +118,7 @@ internal partial class BrowserTabComponent : UserControl
         if (disposing)
         {
             browser.NavigationCompleted -= Browser_NavigationCompleted;
-
+            browser.CoreWebView2.NavigationCompleted -= Browser_NavigationCompleted;
             browser.CoreWebView2?.SourceChanged -= Source_Changed;
 
             if (hIcon.HasValue)
